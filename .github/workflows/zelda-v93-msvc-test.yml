@@ -1,0 +1,83 @@
+name: Zelda V93 MSVC isolated experiment
+
+on:
+  push:
+    branches:
+      - oot-v93-multimethod
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-msvc:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Check out experimental V93 source
+        uses: actions/checkout@v4
+
+      - name: Prepare MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Qt for MSVC
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: ./tools/windows/install-vulkan-sdk.ps1
+
+      - name: Configure clean Windows build
+        shell: bash
+        run: >-
+          cmake -S . -B build/release -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -DYUZU_TESTS=OFF
+          -DYUZU_CMD=ON
+          -DYUZU_ROOM=OFF
+          -DYUZU_ROOM_STANDALONE=OFF
+          -DYUZU_USE_BUNDLED_QT=OFF
+          -DYUZU_USE_BUNDLED_SDL3=ON
+          -DENABLE_UPDATE_CHECKER=OFF
+          -DLICHII_BUILD_TAG=v93-multimethod-${{ github.run_number }}
+          -DLICHII_BUILD_PLATFORM=windows-x86_64
+          -DUSE_DISCORD_PRESENCE=OFF
+
+      - name: Compile Lichii and CLI
+        shell: bash
+        run: cmake --build build/release --target yuzu yuzu-cmd --parallel 4
+
+      - name: Package portable Windows application
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'build/release/bin/lichii.exe')) { throw 'Missing lichii.exe' }
+          if (-not (Test-Path 'build/release/bin/eden-cli.exe')) { throw 'Missing eden-cli.exe' }
+          windeployqt --release --no-translations build/release/bin/lichii.exe
+          Compress-Archive -Path 'build/release/bin/*' -DestinationPath 'lichii-v93-multimethod.zip'
+
+      - name: Upload isolated test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lichii-v93-multimethod-${{ github.sha }}
+          path: lichii-v93-multimethod.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish experimental pre-release for local testing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v93-multimethod-${GITHUB_RUN_NUMBER}" lichii-v93-multimethod.zip \
+            --repo "${GITHUB_REPOSITORY}" --prerelease \
+            --title "V93 MSVC isolated multimethod test ${GITHUB_RUN_NUMBER}" \
+            --notes "Based on original V93 09b78bd; optional EDEN_NX2_V93_FAST_MULTI=1. Saves and personal configuration not included. Test independently."

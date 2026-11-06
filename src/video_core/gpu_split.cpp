@@ -387,13 +387,30 @@ size_t GpuSplit::Execute(const u64* entry, size_t words) {
         const u32 amount = static_cast<u32>(head >> 32);
         const size_t data = (head & HasSegment) != 0 ? 3 : 2;
         auto* const engine = back_engine;
-        Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
-        engine->ConsumeSink(*system);
-        if ((head & HasSegment) != 0) {
-            engine->current_dma_segment = entry[2];
+        // V93-only opt-in experiment. The fast engine is known to be Maxwell3D (final).
+        // Keep the original virtual dispatch with the switch unset for a strict A/B test.
+        static const bool fast_multi = [] {
+            const char* enabled = std::getenv("EDEN_NX2_V93_FAST_MULTI");
+            return enabled != nullptr && enabled[0] == '1' && enabled[1] == '\0';
+        }();
+        if (fast_multi && engine->fast_maxwell3d) {
+            auto* const maxwell3d = static_cast<Tegra::Engines::Maxwell3D*>(engine);
+            maxwell3d->ConsumeSink(*system);
+            if ((head & HasSegment) != 0) {
+                maxwell3d->current_dma_segment = entry[2];
+            }
+            maxwell3d->Tegra::Engines::Maxwell3D::CallMultiMethod(
+                *system, method, reinterpret_cast<const u32*>(entry + data), amount,
+                static_cast<u32>(entry[1]));
+        } else {
+            Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
+            engine->ConsumeSink(*system);
+            if ((head & HasSegment) != 0) {
+                engine->current_dma_segment = entry[2];
+            }
+            engine->CallMultiMethod(*system, method, reinterpret_cast<const u32*>(entry + data),
+                                    amount, static_cast<u32>(entry[1]));
         }
-        engine->CallMultiMethod(*system, method, reinterpret_cast<const u32*>(entry + data),
-                                amount, static_cast<u32>(entry[1]));
         return data + (amount + 1) / 2;
     }
     case Kind::Call: {
