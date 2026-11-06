@@ -485,6 +485,20 @@ size_t GpuSplit::Execute(const u64* entry, size_t words) {
         const u32 amount = static_cast<u32>(head >> 32);
         const size_t data = (head & HasSegment) != 0 ? 3 : 2;
         auto* const engine = back_engine;
+        // The Maxwell3D fast path already handles single-method entries without a virtual
+        // dispatch. Multi entries are common for inline uploads and constant-buffer data;
+        // avoid the same dispatch and disabled profiling scope here too.
+        if (engine->fast_maxwell3d) {
+            auto* const maxwell3d = static_cast<Tegra::Engines::Maxwell3D*>(engine);
+            maxwell3d->ConsumeSink(*system);
+            if ((head & HasSegment) != 0) {
+                maxwell3d->current_dma_segment = entry[2];
+            }
+            maxwell3d->Tegra::Engines::Maxwell3D::CallMultiMethod(
+                *system, method, reinterpret_cast<const u32*>(entry + data), amount,
+                static_cast<u32>(entry[1]));
+            return data + (amount + 1) / 2;
+        }
         Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
         engine->ConsumeSink(*system);
         if ((head & HasSegment) != 0) {
