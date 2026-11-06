@@ -1559,16 +1559,29 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
             },
             VideoCommon::DrainSite::MacroDmaFlush);
     }
-    u32 changed{};
-    for (u32 i = 0; i < words; ++i) {
-        const u32 word = memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
-        if (method == 0x158) {
-            fs.parameters.push_back(word);
-        } else if (ram + i < native_data_ram.size()) {
-            native_data_ram[ram + i] = word;
+    // A macro DMA read can contain up to 4096 consecutive words. The old path translated
+    // each GPU virtual address separately after the buffer-cache flush, often inside the
+    // front/back split's critical wait. ReadWordsUnsafe walks mapped pages in batches and
+    // preserves the Switch 2 syncpoint shim, as the native MME reader already does.
+    thread_local std::array<u32, 0x1000> dma_words;
+    memory_manager.ReadWordsUnsafe(source, dma_words.data(), words);
+    // Apply the result in one contiguous operation whenever the destination fits. Keep the
+    // existing word-wise path for partial or wrapped data-RAM writes.
+    if (method == 0x158) {
+        fs.parameters.insert(fs.parameters.end(), dma_words.data(), dma_words.data() + words);
+    } else if (ram <= native_data_ram.size() && words <= native_data_ram.size() - ram) {
+        std::copy_n(dma_words.data(), words, native_data_ram.begin() + ram);
+    } else {
+        for (u32 i = 0; i < words; ++i) {
+            if (ram + i < native_data_ram.size()) {
+                native_data_ram[ram + i] = dma_words[i];
+            }
         }
-        if (!diag_before.empty() && diag_before[i] != word) {
-            ++changed;
+    }
+    u32 changed{};
+    if (!diag_before.empty()) [[unlikely]] {
+        for (u32 i = 0; i < words; ++i) {
+            changed += diag_before[i] != dma_words[i];
         }
     }
     if (Tegra::Nx2CmdPageDiag::g_enabled) {
