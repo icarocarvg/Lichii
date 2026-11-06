@@ -33,6 +33,20 @@ namespace VideoCommon {
 
 namespace {
 
+// Limit idle spinning on hosts with few physical cores; extra spins waste CPU that can
+// execute the guest or the other GPU thread. Defaults retain the existing latency behavior.
+u32 SpinBudget(const char* name, u32 fallback) {
+    const char* text = std::getenv(name);
+    if (text == nullptr || *text == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 10);
+    return end != text && *end == '\0' && value >= 32 && value <= fallback
+               ? static_cast<u32>(value)
+               : fallback;
+}
+
 void Pause() {
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
     _mm_pause();
@@ -330,7 +344,8 @@ bool GpuSplit::WaitFor(u64 target, DrainSite site) {
 }
 
 void GpuSplit::Backoff(u32 spins, u64 target) {
-    if (spins < 16384) {
+    static const u32 spin_budget = SpinBudget("EDEN_NX2_FRONT_SPIN", 16384);
+    if (spins < spin_budget) {
         Pause();
         return;
     }
@@ -500,13 +515,14 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
     g_back_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
 #endif
     u64 read_position = 0;
+    const u32 back_spin_budget = SpinBudget("EDEN_NX2_BACK_SPIN", 8192);
     while (!stop_token.stop_requested()) {
         Nx2Profile::Report("GPU back thread");
         u64 available = published.load(std::memory_order_acquire);
         if (available == read_position) {
             Nx2Profile::Scope scope{Nx2Profile::Zone::SplitWait};
             // The front usually sends more within microseconds: spin briefly before sleeping.
-            for (u32 spins = 0; spins < 8192 && available == read_position &&
+            for (u32 spins = 0; spins < back_spin_budget && available == read_position &&
                                 !hook_requested.load(std::memory_order_relaxed);
                  ++spins) {
                 Pause();
