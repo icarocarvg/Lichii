@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - oot-v93-multimethod
+      - oot-v93-dlss-probe
   workflow_dispatch:
 
 permissions:
@@ -47,7 +48,7 @@ jobs:
           -DYUZU_USE_BUNDLED_QT=OFF
           -DYUZU_USE_BUNDLED_SDL3=ON
           -DENABLE_UPDATE_CHECKER=OFF
-          -DLICHII_BUILD_TAG=v93-multimethod-${{ github.run_number }}
+          -DLICHII_BUILD_TAG=v93-dlss-probe-${{ github.run_number }}
           -DLICHII_BUILD_PLATFORM=windows-x86_64
           -DUSE_DISCORD_PRESENCE=OFF
 
@@ -61,13 +62,13 @@ jobs:
           if (-not (Test-Path 'build/release/bin/lichii.exe')) { throw 'Missing lichii.exe' }
           if (-not (Test-Path 'build/release/bin/eden-cli.exe')) { throw 'Missing eden-cli.exe' }
           windeployqt --release --no-translations build/release/bin/lichii.exe
-          Compress-Archive -Path 'build/release/bin/*' -DestinationPath 'lichii-v93-multimethod.zip'
+          Compress-Archive -Path 'build/release/bin/*' -DestinationPath 'lichii-v93-dlss-probe.zip'
 
       - name: Upload isolated test binary
         uses: actions/upload-artifact@v4
         with:
-          name: lichii-v93-multimethod-${{ github.sha }}
-          path: lichii-v93-multimethod.zip
+          name: lichii-v93-dlss-probe-${{ github.sha }}
+          path: lichii-v93-dlss-probe.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -77,7 +78,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "v93-multimethod-${GITHUB_RUN_NUMBER}" lichii-v93-multimethod.zip \
+          gh release create "v93-dlss-probe-${GITHUB_RUN_NUMBER}" lichii-v93-dlss-probe.zip \
             --repo "${GITHUB_REPOSITORY}" --prerelease \
-            --title "V93 MSVC isolated multimethod test ${GITHUB_RUN_NUMBER}" \
-            --notes "Based on original V93 09b78bd; optional EDEN_NX2_V93_FAST_MULTI=1. Saves and personal configuration not included. Test independently."
+            --title "V93 MSVC Zelda DLSS buffer diagnostic ${GITHUB_RUN_NUMBER}" \
+            --notes "Based on original V93 09b78bd; adds opt-in Ocarina shader resource tracing for valid DLSS integration. No gameplay changes or promise of DLSS output. Does not include saves or personal settings."

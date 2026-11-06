@@ -66,9 +66,12 @@ std::vector<ByteAddressedRange> ByteAddressedMappedRanges(Tegra::MemoryManager& 
 // EDEN_NX2_UPSCALER_TRACE=1 waits for the first native dispatch using subgroup shuffles (software
 // HMMA) at or after frame EDEN_NX2_UPSCALER_TRACE_FRAME (default 600), then logs the resources of
 // every native compute dispatch in the next EDEN_NX2_UPSCALER_TRACE_FRAMES frames (default 3), at
-// most 4000 lines. It prints guest addresses and hashes of constant data, never the data.
+// most 4000 lines. EDEN_NX2_UPSCALER_TRACE_ANY=1 also arms on ordinary native compute,
+// allowing the Ocarina of Time spatial upscaler (which does not use HMMA) to be examined.
+// This diagnostic never changes rendering. It logs addresses and hashes, not constant data.
 struct UpscalerTrace {
     bool enabled{};
+    bool trace_any_native{};
     u64 first_frame{};
     u64 frames{};
     u64 armed_frame{};
@@ -84,8 +87,10 @@ UpscalerTrace& GetUpscalerTrace() {
             return value ? u64{std::strtoull(value, nullptr, 10)} : fallback;
         }};
         const char* const enabled{std::getenv("EDEN_NX2_UPSCALER_TRACE")};
+        const char* const any{std::getenv("EDEN_NX2_UPSCALER_TRACE_ANY")};
         return UpscalerTrace{
             .enabled = enabled != nullptr && *enabled != '\0' && *enabled != '0',
+            .trace_any_native = any != nullptr && *any != '\0' && *any != '0',
             .first_frame = number("EDEN_NX2_UPSCALER_TRACE_FRAME", 600),
             .frames = number("EDEN_NX2_UPSCALER_TRACE_FRAMES", 3),
         };
@@ -118,10 +123,10 @@ void TraceUpscalerDispatch(UpscalerTrace& trace, const Shader::Info& info, u64 s
     const auto& cbuf0{qmd.const_buffer_config[0]};
     const bool has_cbuf0{(qmd.const_buffer_enable_mask & 1) != 0 && cbuf0.size != 0 &&
                          gpu_memory.IsFullyMappedRange(cbuf0.Address(), cbuf0.size)};
-    log(fmt::format("f={} prog={:#x} hash={:016x} grid={}x{}x{} block={}x{}x{} cb0={:#x}+{:#x} "
+    log(fmt::format("f={} prog={:#x} start={:#x} hash={:016x} grid={}x{}x{} block={}x{}x{} cb0={:#x}+{:#x} "
                     "cb0_fnv={:016x}",
                     trace.frame.load(std::memory_order_relaxed),
-                    kepler_compute.regs.code_loc.Address(), shader_hash, qmd.grid_dim_x.Value(),
+                    kepler_compute.regs.code_loc.Address(), qmd.program_start, shader_hash, qmd.grid_dim_x.Value(),
                     qmd.grid_dim_y.Value(), qmd.grid_dim_z.Value(), qmd.block_dim_x.Value(),
                     qmd.block_dim_y.Value(), qmd.block_dim_z.Value(), cbuf0.Address(),
                     cbuf0.size.Value(),
@@ -428,7 +433,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     texture_cache.FillImageViews(std::span(views.data(), views.size()), true);
     if (auto& trace{GetUpscalerTrace()}; trace.enabled && kepler_compute.IsNativeMode()) {
         const u64 frame{trace.frame.load(std::memory_order_relaxed)};
-        if (!trace.armed && frame >= trace.first_frame && info.uses_subgroup_shuffles) {
+        if (!trace.armed && frame >= trace.first_frame &&
+            (info.uses_subgroup_shuffles || trace.trace_any_native)) {
             trace.armed = true;
             trace.armed_frame = frame;
             LOG_INFO(Render_Vulkan, "Upscaler trace armed at frame {} by {:016x}", frame,
