@@ -1926,8 +1926,13 @@ void GraphicsPipeline::FillStates(PipelineStates& s) const {
         if (has_tess_stages) {
             // The Vulkan spec requires patch list IA topology be used with tessellation
             // shader stages. Forcing it fixes a crash on some drivers
-            LOG_WARNING(Render_Vulkan,
-                        "Patch topology not used with tessellation, using patch list");
+            // The same correction can occur for thousands of distinct pipelines while
+            // preparing OoT's shader cache. Avoid synchronously logging each occurrence.
+            static std::atomic_flag warned_patch_topology = ATOMIC_FLAG_INIT;
+            if (!warned_patch_topology.test_and_set(std::memory_order_relaxed)) {
+                LOG_WARNING(Render_Vulkan,
+                            "Patch topology not used with tessellation, using patch list");
+            }
             input_assembly_topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
         }
     }

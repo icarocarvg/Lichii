@@ -183,6 +183,7 @@ void GpuSplit::Stop() {
     back_entry_position = 0;
     async_writes.clear();
     last_sync_position = 0;
+    synced_writer_position = 0;
     last_memory_write_position = 0;
     previous_memory_write_position = 0;
     last_method_write_position = 0;
@@ -442,7 +443,9 @@ bool GpuSplit::WaitForSync() {
 }
 
 bool GpuSplit::WaitForSyncedWriters(DrainSite site) {
-    return WaitFor(std::min({last_writer_position, last_sync_position, write_position}), site);
+    // A fetch is ordered after writers sent before the last host-level sync, not
+    // after every non-writing method sent before that sync.
+    return WaitFor(std::min(synced_writer_position, write_position), site);
 }
 
 void GpuSplit::RangeLastWrite(GPUVAddr begin, GPUVAddr end, const u32* data, size_t space) {

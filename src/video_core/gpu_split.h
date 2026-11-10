@@ -735,6 +735,7 @@ public:
     /// commands after it are fetched.
     void NoteSync() {
         last_sync_position = write_position;
+        synced_writer_position = last_writer_position;
     }
     /// Waits until the back executed the work sent before the last NoteSync. Returns whether any
     /// of it was still queued.
@@ -1062,6 +1063,7 @@ private:
         dispatches_unbounded{};
     void AppendDispatchWrite(u64 begin, u64 end);
     u64 last_sync_position{};
+    u64 synced_writer_position{}; ///< Newest writer before the last host-level sync.
     u64 last_memory_write_position{};
     static constexpr u32 DeferredWrite = ~0U;
     static constexpr u32 OtherEngineWrite = ~0U - 1;

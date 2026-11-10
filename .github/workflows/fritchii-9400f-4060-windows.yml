@@ -1,0 +1,76 @@
+name: Fritchii 5.6 - PC i5-9400F RTX 4060
+
+on:
+  push:
+    branches:
+      - fritchii-v56-9400f-rtx4060
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fritchii-9400f-4060-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-msvc:
+    name: Compile Fritchii Windows x64 without modifying game data
+    runs-on: windows-2022
+    timeout-minutes: 110
+    steps:
+      - name: Checkout isolated source branch
+        uses: actions/checkout@v4
+
+      - name: Initialize MSVC x64 environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Qt 6.8.3 MSVC
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: ./tools/windows/install-vulkan-sdk.ps1
+
+      - name: Configure release with local updates disabled
+        shell: bash
+        run: >-
+          cmake -S . -B build/release -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DENABLE_WERROR=OFF
+          -DBUILD_TESTING=OFF
+          -DYUZU_TESTS=OFF
+          -DYUZU_CMD=ON
+          -DYUZU_ROOM=OFF
+          -DYUZU_ROOM_STANDALONE=OFF
+          -DYUZU_USE_BUNDLED_QT=OFF
+          -DYUZU_USE_BUNDLED_SDL3=ON
+          -DENABLE_UPDATE_CHECKER=OFF
+          -DLICHII_BUILD_TAG=v5.6
+          -DLICHII_BUILD_PLATFORM=windows-x86_64
+          -DUSE_DISCORD_PRESENCE=OFF
+
+      - name: Compile Windows application
+        shell: bash
+        run: cmake --build build/release --target yuzu yuzu-cmd --parallel 4
+
+      - name: Package separate emulator build
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'build/release/bin/lichii.exe')) { throw 'Windows executable not produced' }
+          windeployqt --release --no-translations build/release/bin/lichii.exe
+          Compress-Archive -Path 'build/release/bin/*' -DestinationPath 'fritchii-v56-9400f-4060.zip'
+
+      - name: Save compiled artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fritchii-v56-9400f-4060-${{ github.sha }}
+          path: fritchii-v56-9400f-4060.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -368,6 +368,10 @@ bool DmaPusher::Step() {
             const bool skip = old_waits ? skip_list_wait
                                         : skip_list_wait && dma_state.method_count == 0 &&
                                               !CopyWritersPending(split);
+            // The deferred recheck below is diagnostic and expensive for the many
+            // command lists OoT submits. Opt in explicitly when investigating races.
+            static const bool verify_list_waits =
+                std::getenv("EDEN_NX2_LIST_WAIT_VERIFY") != nullptr;
             bool checked = skip;
             if (!skip) {
                 if (old_waits ? split.WaitForWriters() : split.WaitForSyncedWriters()) {
@@ -377,7 +381,7 @@ bool DmaPusher::Step() {
                 // Writers sent after the last sync may still be queued.
                 checked = !gpu_written && !split.Ran(split.LastWriterPosition());
             }
-            if (checked) {
+            if (checked && verify_list_waits) {
                 split.Defer([this, address = GPUVAddr{dma_state.dma_get},
                              size = size_t{header.size} * sizeof(u32), skip] {
                     if (IsGpuWrittenCommands(address, size)) {
