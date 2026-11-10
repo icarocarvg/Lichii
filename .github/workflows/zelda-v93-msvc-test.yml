@@ -1,9 +1,7 @@
 name: Fritchii 5.6 - PC i5-9400F RTX 4060
 
 on:
-  push:
-    branches:
-      - fritchii-v56-9400f-rtx4060
+  workflow_dispatch:
 
 permissions:
   contents: read
