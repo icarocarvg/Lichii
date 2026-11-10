@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -614,5 +615,79 @@ TEST_CASE("Dark's standalone Dynamic FPS mod is skipped and hidden for the built
         REQUIRE(WordAt(patched) == NopInstruction);
         REQUIRE(std::equal(DynamicCall.begin(), DynamicCall.end(), patched.begin() + CallOffset));
         REQUIRE(listed(context.Manager(), "Other mod"));
+    }
+}
+
+
+TEST_CASE("Ocarina texture pool patch is build-checked, reversible, and clear of water code",
+          "[patch_manager]") {
+    constexpr size_t Code = sizeof(Loader::NSOHeader);
+    constexpr size_t Hook = Code + 0xC2A36C;
+    constexpr size_t Cave = Code + 0x3C46320;
+    constexpr u32 OriginalWord = 0xA90127E8;
+    constexpr u32 PatchedCall = 0x94C06FED; // bl 0x3C46320 from main+0xC2A36C
+    constexpr std::array<u8, 12> Routine{
+        0x08, 0xF9, 0x7F, 0xD3, 0xE8, 0x27, 0x01, 0xA9, 0xC0, 0x03, 0x5F, 0xD6,
+    };
+
+    // Preserve the process environment and the high-refresh setting across this test.
+    struct Restore {
+        std::optional<std::string> previous;
+        Restore() {
+            if (const char* value = std::getenv("EDEN_NX2_NO_OOT_TEXTURE_POOL_X2")) {
+                previous = value;
+            }
+        }
+        static void Set(const char* value) {
+#ifdef _WIN32
+            _putenv_s("EDEN_NX2_OOT_TEXTURE_POOL_X2", value);
+#else
+            if (*value) {
+                setenv("EDEN_NX2_OOT_TEXTURE_POOL_X2", value, 1);
+            } else {
+                unsetenv("EDEN_NX2_OOT_TEXTURE_POOL_X2");
+            }
+#endif
+        }
+        ~Restore() {
+            Set(previous ? previous->c_str() : "");
+            Settings::values.oot_high_refresh.SetValue(false);
+        }
+    } restore;
+
+    Restore::Set("");
+    PatchManagerTestContext context;
+    auto nso = MakeOcarinaMain();
+    std::memcpy(nso.data() + Hook, &OriginalWord, sizeof(OriginalWord));
+
+    SECTION("Correct build applies both records and leaves high-refresh cave untouched") {
+        Settings::values.oot_high_refresh.SetValue(true);
+        const auto patched = context.Manager().PatchNSO(nso, "main");
+        u32 branch = 0;
+        std::memcpy(&branch, patched.data() + Hook, sizeof(branch));
+        REQUIRE(branch == PatchedCall);
+        REQUIRE(std::equal(Routine.begin(), Routine.end(), patched.begin() + Cave));
+        // Water ripple routine uses main+0x3C46290 through main+0x3C46310.
+        REQUIRE(std::any_of(patched.begin() + Code + 0x3C46290,
+                            patched.begin() + Code + 0x3C46310,
+                            [](u8 byte) { return byte != 0; }));
+    }
+    SECTION("Opt-out keeps the original guest allocator") {
+        Restore::Set("1");
+        REQUIRE(context.Manager().PatchNSO(nso, "main")[Hook] == nso[Hook]);
+    }
+    SECTION("Mismatched hook refuses both changes") {
+        constexpr u32 Nop = 0xD503201F;
+        std::memcpy(nso.data() + Hook, &Nop, sizeof(Nop));
+        const auto patched = context.Manager().PatchNSO(nso, "main");
+        REQUIRE(std::equal(nso.begin() + Hook, nso.begin() + Hook + 4, patched.begin() + Hook));
+        REQUIRE(std::equal(nso.begin() + Cave, nso.begin() + Cave + Routine.size(),
+                           patched.begin() + Cave));
+    }
+    SECTION("Occupied code cave refuses the patch") {
+        nso[Cave] = 0xCC;
+        const auto patched = context.Manager().PatchNSO(nso, "main");
+        REQUIRE(std::equal(nso.begin() + Hook, nso.begin() + Hook + 4, patched.begin() + Hook));
+        REQUIRE(patched[Cave] == 0xCC);
     }
 }

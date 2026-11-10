@@ -93,6 +93,40 @@ constexpr std::array MAX_RESOLUTION_RECORDS{
                        .original = 0x360041E8}, // tbz w8, #0, 0x80640c
 };
 
+// Port of RsMan-Dev's Ocarina texture-pool fix from zortos293/Lichii#976. The hook
+// doubles the guest graphics allocator's initial pool; it addresses the guard-house null
+// allocation failure, not the host texture-cache VRAM budget. The upstream code cave was
+// 0x3C462C0, but Fritchii's high-refresh/water patch ALREADY uses through 0x3C46310.
+// Place the routine at 0x3C46320 and recompute BL so the built-ins never overwrite each other.
+constexpr size_t TEXTURE_POOL_HOOK_OFFSET = 0xC2A36C;
+constexpr size_t TEXTURE_POOL_CAVE_OFFSET = 0x3C46320;
+constexpr u32 TEXTURE_POOL_ORIGINAL_WORD = 0xA90127E8;
+constexpr u32 TEXTURE_POOL_BRANCH_WORD = 0x94000000 | ((TEXTURE_POOL_CAVE_OFFSET - TEXTURE_POOL_HOOK_OFFSET) / 4);
+static_assert(TEXTURE_POOL_BRANCH_WORD == 0x94C06FED);
+constexpr std::array<u8, 4> TEXTURE_POOL_CALL{0xED, 0x6F, 0xC0, 0x94};
+constexpr std::array<u8, 12> TEXTURE_POOL_ROUTINE{
+    0x08, 0xF9, 0x7F, 0xD3, 0xE8, 0x27, 0x01, 0xA9, 0xC0, 0x03, 0x5F, 0xD6,
+};
+constexpr std::array TEXTURE_POOL_RECORDS{
+    BuiltinPatchRecord{.module_offset = TEXTURE_POOL_HOOK_OFFSET,
+                       .bytes = TEXTURE_POOL_CALL,
+                       .checked = true,
+                       .original = TEXTURE_POOL_ORIGINAL_WORD},
+    BuiltinPatchRecord{.module_offset = TEXTURE_POOL_CAVE_OFFSET,
+                       .bytes = std::span<const u8>{TEXTURE_POOL_ROUTINE}.subspan(0, 4),
+                       .checked = true,
+                       .original = 0},
+    BuiltinPatchRecord{.module_offset = TEXTURE_POOL_CAVE_OFFSET + 4,
+                       .bytes = std::span<const u8>{TEXTURE_POOL_ROUTINE}.subspan(4, 4),
+                       .checked = true,
+                       .original = 0},
+    BuiltinPatchRecord{.module_offset = TEXTURE_POOL_CAVE_OFFSET + 8,
+                       .bytes = std::span<const u8>{TEXTURE_POOL_ROUTINE}.subspan(8, 4),
+                       .checked = true,
+                       .original = 0},
+};
+static_assert(TEXTURE_POOL_CAVE_OFFSET >= 0x3C46200 + 0x110);
+
 // Dynamic FPS by Dark (Eglantine Dev), bundled with his permission: the game's frame step follows
 // the time measured with the system counter instead of assuming 30 fps, so it runs at full speed
 // at any frame rate. A call (bl 0x3c46200) to a routine in unused space after the code.
@@ -267,6 +301,15 @@ constexpr std::array BUILTIN_PATCHES{
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = MAX_RESOLUTION_RECORDS,
         .disable_env = "EDEN_NX2_NO_MAX_RES",
+    },
+    // Default for the matching Ocarina build; EDEN_NX2_NO_OOT_TEXTURE_POOL_X2=1 disables it.
+    BuiltinPatch{
+        .name = "Texture Pool x2 (built-in, OoT)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = TEXTURE_POOL_RECORDS,
+        .disable_env = "EDEN_NX2_NO_OOT_TEXTURE_POOL_X2",
     },
     // Before Dark's: it contains his routine and replaces it while applied. Off by default; only
     // listed in Add-Ons while the setting is on.
